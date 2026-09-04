@@ -107,29 +107,31 @@ jobs:
 
         Write-Host "RDP user configured."
 
-
-    # =========================================================
-    # 4. Enable Windows RDP
-    # =========================================================
     - name: Enable Windows RDP
       shell: powershell
       run: |
 
         Write-Host "Enabling Remote Desktop..."
 
+        # Enable RDP
         Set-ItemProperty `
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
             -Name "fDenyTSConnections" `
             -Value 0
 
+        # Disable Network Level Authentication temporarily
+        # This makes the temporary RDP server compatible with
+        # older / alternative Android RDP clients.
         Set-ItemProperty `
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
             -Name "UserAuthentication" `
-            -Value 1
+            -Value 0
 
+        # Enable Remote Desktop firewall rules
         Enable-NetFirewallRule `
             -DisplayGroup "Remote Desktop"
 
+        # Ensure Remote Desktop service is running
         Set-Service `
             -Name "TermService" `
             -StartupType Automatic
@@ -138,10 +140,18 @@ jobs:
             -Name "TermService" `
             -ErrorAction SilentlyContinue
 
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 5
 
-        Write-Host "Remote Desktop enabled."
+        Write-Host ""
+        Write-Host "RDP enabled."
+        Write-Host "NLA disabled for compatibility testing."
 
+        Write-Host ""
+        Write-Host "Testing port 3389..."
+
+        Test-NetConnection `
+            127.0.0.1 `
+            -Port 3389
 
     # =========================================================
     # 5. Verify RDP
