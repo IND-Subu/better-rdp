@@ -259,7 +259,29 @@ jobs:
 
           Write-Host ""
           Write-Host "LOCAL RDP TEST PASSED."
-
+          Write-Host ""
+          Write-Host "=== RDP SESSIONS ==="
+          
+          qwinsta
+          
+          Write-Host ""
+          Write-Host "=== LOCAL USERS ==="
+          
+          Get-LocalUser |
+              Select-Object Name, Enabled, LastLogon |
+              Format-Table
+          
+          Write-Host ""
+          Write-Host "=== ADMINISTRATOR GROUP ==="
+          
+          Get-LocalGroupMember -Group "Administrators" |
+              Format-Table Name, ObjectClass, PrincipalSource
+          
+          Write-Host ""
+          Write-Host "=== REMOTE DESKTOP USERS GROUP ==="
+          
+          Get-LocalGroupMember -Group "Remote Desktop Users" |
+              Format-Table Name, ObjectClass, PrincipalSource
 
       # ============================================================
       # 6. Start ngrok and keep the SAME process alive
