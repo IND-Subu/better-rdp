@@ -25,9 +25,28 @@ echo $2 | perl -we 'BEGIN { @k = unpack "C*", pack "H*", "1734516E8BA8C5E2FF1C39
 sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent -console
 sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate
 
-#install ngrok
+# install ngrok
 brew install ngrok --cask
 
-#configure ngrok and start it
-ngrok authtoken $3
-ngrok tcp 5900 &
+# configure ngrok
+ngrok config add-authtoken "$3"
+
+# start VNC tunnel
+ngrok tcp 5900 > /tmp/ngrok.log 2>&1 &
+
+# wait for ngrok API
+for i in {1..30}; do
+    if curl -s http://127.0.0.1:4040/api/tunnels > /tmp/tunnels.json; then
+        if jq -e '.tunnels | length > 0' /tmp/tunnels.json >/dev/null 2>&1; then
+            break
+        fi
+    fi
+    sleep 2
+done
+
+# show ngrok errors if tunnel wasn't created
+if ! jq -e '.tunnels | length > 0' /tmp/tunnels.json >/dev/null 2>&1; then
+    echo "ngrok failed to create tunnel:"
+    cat /tmp/ngrok.log
+    exit 1
+fi
