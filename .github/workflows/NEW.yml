@@ -1,4 +1,4 @@
-name: Windows RDP
+name: Windows RDP Diagnostic
 
 on:
   workflow_dispatch:
@@ -11,33 +11,45 @@ jobs:
     steps:
 
     # =========================================================
-    # 1. Install ngrok
+    # 1. INSTALL NGROK
     # =========================================================
     - name: Install ngrok
       shell: powershell
       run: |
-        Write-Host "Installing ngrok..."
+        $ErrorActionPreference = "Stop"
+
+        Write-Host "=========================================="
+        Write-Host " INSTALLING NGROK"
+        Write-Host "=========================================="
 
         choco install ngrok -y --no-progress
 
-        $ngrok = Get-Command ngrok -ErrorAction Stop
+        $ngrokCommand = Get-Command ngrok -ErrorAction Stop
 
-        Write-Host "ngrok path:"
-        Write-Host $ngrok.Source
+        Write-Host ""
+        Write-Host "ngrok executable:"
+        Write-Host $ngrokCommand.Source
 
+        Write-Host ""
         ngrok version
 
 
     # =========================================================
-    # 2. Authenticate ngrok
+    # 2. AUTHENTICATE NGROK
     # =========================================================
     - name: Connect to ngrok account
       shell: powershell
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
       run: |
+        $ErrorActionPreference = "Stop"
+
+        Write-Host "=========================================="
+        Write-Host " AUTHENTICATING NGROK"
+        Write-Host "=========================================="
+
         if ([string]::IsNullOrWhiteSpace($env:NGROK_AUTH_TOKEN)) {
-            Write-Error "NGROK_AUTH_TOKEN secret is missing."
+            Write-Error "NGROK_AUTH_TOKEN GitHub Secret is missing."
             exit 1
         }
 
@@ -48,90 +60,116 @@ jobs:
             exit 1
         }
 
+        Write-Host ""
         Write-Host "ngrok authentication successful."
 
 
     # =========================================================
-    # 3. Create RDP user
+    # 3. CREATE RDP USER
     # =========================================================
     - name: Create RDP user
       shell: powershell
       env:
         RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
       run: |
+        $ErrorActionPreference = "Stop"
+
+        Write-Host "=========================================="
+        Write-Host " CREATING RDP USER"
+        Write-Host "=========================================="
+
         if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
-            Write-Error "RDP_PASSWORD secret is missing."
+            Write-Error "RDP_PASSWORD GitHub Secret is missing."
             exit 1
         }
 
-        $password = ConvertTo-SecureString `
+        $securePassword = ConvertTo-SecureString `
             $env:RDP_PASSWORD `
             -AsPlainText `
             -Force
 
-        $user = Get-LocalUser `
+        $existingUser = Get-LocalUser `
             -Name "administrator" `
             -ErrorAction SilentlyContinue
 
-        if ($null -eq $user) {
+        if ($null -eq $existingUser) {
 
             Write-Host "Creating administrator account..."
 
             New-LocalUser `
                 -Name "administrator" `
-                -Password $password `
+                -Password $securePassword `
                 -FullName "RDP Administrator" `
-                -Description "Temporary RDP account"
+                -Description "Temporary GitHub Actions RDP account"
 
-        } else {
+        }
+        else {
 
-            Write-Host "Administrator already exists."
+            Write-Host "administrator already exists."
             Write-Host "Updating password..."
 
             Set-LocalUser `
                 -Name "administrator" `
-                -Password $password
+                -Password $securePassword
         }
 
         Enable-LocalUser -Name "administrator"
 
+        # Add to Administrators
         Add-LocalGroupMember `
             -Group "Administrators" `
             -Member "administrator" `
             -ErrorAction SilentlyContinue
 
+        # Add to Remote Desktop Users
         Add-LocalGroupMember `
             -Group "Remote Desktop Users" `
             -Member "administrator" `
             -ErrorAction SilentlyContinue
 
-        Write-Host "RDP user configured."
+        Write-Host ""
+        Write-Host "User status:"
 
+        Get-LocalUser `
+            -Name "administrator" |
+            Select-Object Name, Enabled, Description |
+            Format-Table
+
+        Write-Host ""
+        Write-Host "RDP username: administrator"
+
+
+    # =========================================================
+    # 4. ENABLE WINDOWS RDP
+    # =========================================================
     - name: Enable Windows RDP
       shell: powershell
       run: |
+        $ErrorActionPreference = "Stop"
 
-        Write-Host "Enabling Remote Desktop..."
+        Write-Host "=========================================="
+        Write-Host " ENABLING WINDOWS RDP"
+        Write-Host "=========================================="
 
-        # Enable RDP
+        # Enable Remote Desktop
         Set-ItemProperty `
-            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
             -Name "fDenyTSConnections" `
             -Value 0
 
-        # Disable Network Level Authentication temporarily
-        # This makes the temporary RDP server compatible with
-        # older / alternative Android RDP clients.
+        # -----------------------------------------------------
+        # NLA disabled temporarily for compatibility testing
+        # -----------------------------------------------------
         Set-ItemProperty `
-            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
             -Name "UserAuthentication" `
             -Value 0
 
-        # Enable Remote Desktop firewall rules
+        # Enable firewall rules
         Enable-NetFirewallRule `
             -DisplayGroup "Remote Desktop"
 
-        # Ensure Remote Desktop service is running
+        # Configure TermService
         Set-Service `
             -Name "TermService" `
             -StartupType Automatic
@@ -143,66 +181,70 @@ jobs:
         Start-Sleep -Seconds 5
 
         Write-Host ""
-        Write-Host "RDP enabled."
-        Write-Host "NLA disabled for compatibility testing."
+        Write-Host "Remote Desktop enabled."
+        Write-Host "NLA disabled."
 
-        Write-Host ""
-        Write-Host "Testing port 3389..."
-
-        Test-NetConnection `
-            127.0.0.1 `
-            -Port 3389
 
     # =========================================================
-    # 5. Verify RDP
+    # 5. VERIFY LOCAL RDP
     # =========================================================
     - name: Verify local RDP
       shell: powershell
       run: |
+        $ErrorActionPreference = "Stop"
 
+        Write-Host ""
         Write-Host "=========================================="
         Write-Host " LOCAL RDP DIAGNOSTICS"
         Write-Host "=========================================="
 
+        # -----------------------------------------------------
+        # TermService
+        # -----------------------------------------------------
+
         Write-Host ""
-        Write-Host "TermService:"
+        Write-Host "=== TermService ==="
 
         Get-Service TermService |
             Format-Table Name, Status, StartType
 
+
+        # -----------------------------------------------------
+        # RDP registry
+        # -----------------------------------------------------
+
         Write-Host ""
-        Write-Host "RDP registry:"
+        Write-Host "=== RDP Registry ==="
 
         Get-ItemProperty `
-            'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' `
-            -Name fDenyTSConnections
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
+            -Name "fDenyTSConnections"
+
+        Get-ItemProperty `
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+            -Name "UserAuthentication"
+
+
+        # -----------------------------------------------------
+        # Firewall
+        # -----------------------------------------------------
 
         Write-Host ""
-        Write-Host "Testing localhost:3389..."
+        Write-Host "=== Remote Desktop Firewall Rules ==="
 
-        $test = Test-NetConnection `
-            -ComputerName 127.0.0.1 `
-            -Port 3389 `
-            -WarningAction SilentlyContinue
-
-        $test |
-            Select-Object `
-                ComputerName,
-                RemotePort,
-                TcpTestSucceeded |
+        Get-NetFirewallRule `
+            -DisplayGroup "Remote Desktop" |
+            Where-Object Enabled -eq "True" |
+            Select-Object DisplayName, Enabled, Profile, Direction, Action |
             Format-Table
 
-        if (-not $test.TcpTestSucceeded) {
 
-            Write-Error "RDP is not listening on port 3389."
-            exit 1
-        }
-
-        Write-Host ""
-        Write-Host "RDP port 3389 is OPEN."
+        # -----------------------------------------------------
+        # Port 3389
+        # -----------------------------------------------------
 
         Write-Host ""
-        Write-Host "Listening connections:"
+        Write-Host "=== Port 3389 ==="
 
         Get-NetTCPConnection `
             -LocalPort 3389 `
@@ -210,19 +252,51 @@ jobs:
             Format-Table `
                 LocalAddress,
                 LocalPort,
+                RemoteAddress,
+                RemotePort,
                 State,
                 OwningProcess
 
 
+        # -----------------------------------------------------
+        # Local connectivity test
+        # -----------------------------------------------------
+
+        Write-Host ""
+        Write-Host "=== Test localhost:3389 ==="
+
+        $rdpTest = Test-NetConnection `
+            -ComputerName 127.0.0.1 `
+            -Port 3389 `
+            -WarningAction SilentlyContinue
+
+        $rdpTest |
+            Select-Object `
+                ComputerName,
+                RemotePort,
+                TcpTestSucceeded |
+            Format-Table
+
+        if (-not $rdpTest.TcpTestSucceeded) {
+            Write-Error "Windows RDP is NOT listening on port 3389."
+            exit 1
+        }
+
+        Write-Host ""
+        Write-Host "LOCAL RDP TEST PASSED."
+
+
     # =========================================================
-    # 6. START NGROK + KEEP ALIVE
+    # 6. START NGROK + MONITOR + KEEP ALIVE
     #
     # IMPORTANT:
-    # ngrok is kept alive in THIS SAME STEP.
+    # ngrok is started and kept alive INSIDE THIS SAME STEP.
     # =========================================================
-    - name: Start RDP tunnel and keep alive
+    - name: Start RDP tunnel and monitor
       shell: powershell
       run: |
+
+        $ErrorActionPreference = "Continue"
 
         Write-Host ""
         Write-Host "=========================================="
@@ -231,10 +305,15 @@ jobs:
 
         $ngrokPath = (Get-Command ngrok -ErrorAction Stop).Source
 
-        Write-Host "ngrok:"
+        Write-Host ""
+        Write-Host "ngrok executable:"
         Write-Host $ngrokPath
 
-        # Start ngrok
+
+        # =====================================================
+        # START NGROK
+        # =====================================================
+
         $ngrokProcess = Start-Process `
             -FilePath $ngrokPath `
             -ArgumentList "tcp 3389" `
@@ -245,18 +324,28 @@ jobs:
         Write-Host "ngrok PID:"
         Write-Host $ngrokProcess.Id
 
-        # Wait for ngrok API
+
+        # =====================================================
+        # WAIT FOR NGROK API
+        # =====================================================
+
         $tunnel = $null
 
-        for ($i = 1; $i -le 30; $i++) {
+        Write-Host ""
+        Write-Host "Waiting for ngrok API..."
+
+        for ($attempt = 1; $attempt -le 30; $attempt++) {
 
             Start-Sleep -Seconds 2
 
-            # Check whether ngrok is still alive
-            if ($ngrokProcess.HasExited) {
+            # Check process
+            $processCheck = Get-Process `
+                -Id $ngrokProcess.Id `
+                -ErrorAction SilentlyContinue
 
-                Write-Error "ngrok exited unexpectedly."
+            if ($null -eq $processCheck) {
 
+                Write-Error "ngrok process exited unexpectedly."
                 exit 1
             }
 
@@ -267,45 +356,54 @@ jobs:
                     -Method Get `
                     -ErrorAction Stop
 
-                if ($api.tunnels.Count -gt 0) {
+                if ($null -ne $api.tunnels -and $api.tunnels.Count -gt 0) {
 
                     $tunnel = $api.tunnels[0]
                     break
                 }
 
-            } catch {
+            }
+            catch {
 
-                Write-Host "Waiting for ngrok API... $i/30"
+                Write-Host "Waiting for ngrok... $attempt/30"
             }
         }
 
+
+        # =====================================================
+        # VERIFY TUNNEL
+        # =====================================================
+
         if ($null -eq $tunnel) {
 
-            Write-Error "Could not obtain ngrok tunnel."
-
-            if (-not $ngrokProcess.HasExited) {
-                Stop-Process `
-                    -Id $ngrokProcess.Id `
-                    -Force `
-                    -ErrorAction SilentlyContinue
-            }
+            Write-Host ""
+            Write-Host "=========================================="
+            Write-Host " NGROK TUNNEL CREATION FAILED"
+            Write-Host "=========================================="
 
             exit 1
         }
 
 
         # =====================================================
-        # DISPLAY CONNECTION INFORMATION
+        # EXTRACT ADDRESS
         # =====================================================
 
         $publicUrl = $tunnel.public_url
-        $rdpAddress = $publicUrl -replace '^tcp://', ''
+
+        $rdpAddress = $publicUrl `
+            -replace "^tcp://", ""
+
+
+        # =====================================================
+        # DISPLAY CONNECTION INFORMATION
+        # =====================================================
 
         Write-Host ""
         Write-Host ""
         Write-Host "########################################################"
         Write-Host "#                                                      #"
-        Write-Host "#             WINDOWS RDP IS READY                     #"
+        Write-Host "#              WINDOWS RDP IS READY                    #"
         Write-Host "#                                                      #"
         Write-Host "########################################################"
 
@@ -318,12 +416,24 @@ jobs:
         Write-Host $rdpAddress
 
         Write-Host ""
-        Write-Host "RDP USERNAME:"
+        Write-Host "HOST:"
+        Write-Host (($rdpAddress -split ":")[0])
+
+        Write-Host ""
+        Write-Host "PORT:"
+        Write-Host (($rdpAddress -split ":")[-1])
+
+        Write-Host ""
+        Write-Host "USERNAME:"
         Write-Host "administrator"
 
         Write-Host ""
-        Write-Host "RDP PASSWORD:"
-        Write-Host "Use the value stored in GitHub Secret RDP_PASSWORD"
+        Write-Host "PASSWORD:"
+        Write-Host "Use GitHub Secret RDP_PASSWORD"
+
+        Write-Host ""
+        Write-Host "DOMAIN:"
+        Write-Host "Leave blank"
 
         Write-Host ""
         Write-Host "GATEWAY:"
@@ -331,79 +441,347 @@ jobs:
 
         Write-Host ""
         Write-Host "########################################################"
-        Write-Host ""
 
 
         # =====================================================
-        # VERIFY NGROK IS ALIVE
-        # =====================================================
-
-        Write-Host "Checking ngrok process..."
-
-        Get-Process `
-            -Id $ngrokProcess.Id |
-            Format-Table Id, ProcessName, CPU, StartTime
-
-
-        # =====================================================
-        # VERIFY NGROK API
+        # INITIAL NGROK CHECK
         # =====================================================
 
         Write-Host ""
-        Write-Host "Checking ngrok API..."
+        Write-Host "=========================================="
+        Write-Host " INITIAL NGROK CHECK"
+        Write-Host "=========================================="
 
-        try {
+        $running = Get-Process `
+            -Id $ngrokProcess.Id `
+            -ErrorAction SilentlyContinue
 
-            $check = Invoke-RestMethod `
-                -Uri "http://127.0.0.1:4040/api/tunnels" `
-                -Method Get
+        if ($null -eq $running) {
 
-            $check.tunnels |
-                Select-Object `
-                    public_url,
-                    proto,
-                    name |
-                Format-Table
-
-        } catch {
-
-            Write-Error "ngrok API is unavailable."
+            Write-Error "ngrok is not running."
             exit 1
         }
 
-
-        # =====================================================
-        # KEEP NGROK + RDP ALIVE
-        # =====================================================
-
-        Write-Host ""
-        Write-Host "=========================================="
-        Write-Host " RDP SESSION ACTIVE"
-        Write-Host "=========================================="
-
-        Write-Host ""
-        Write-Host "Keep this GitHub Actions job running."
-        Write-Host "Do NOT cancel the workflow."
-        Write-Host ""
-
-        # 35 minutes
-        Start-Sleep -Seconds 2100
+        Write-Host "ngrok process: RUNNING"
+        Write-Host "PID: $($ngrokProcess.Id)"
 
 
         # =====================================================
-        # CLEANUP
+        # RDP CONNECTION MONITOR
         # =====================================================
 
         Write-Host ""
-        Write-Host "RDP session time expired."
-        Write-Host "Stopping ngrok..."
+        Write-Host ""
+        Write-Host "########################################################"
+        Write-Host "#                                                      #"
+        Write-Host "#          RDP CONNECTION MONITOR ACTIVE               #"
+        Write-Host "#                                                      #"
+        Write-Host "#  Now try connecting from your Android device.        #"
+        Write-Host "#                                                      #"
+        Write-Host "########################################################"
 
-        if (-not $ngrokProcess.HasExited) {
 
-            Stop-Process `
+        # 120 checks × 10 seconds = 20 minutes
+        for ($i = 1; $i -le 120; $i++) {
+
+            Start-Sleep -Seconds 10
+
+
+            # =================================================
+            # CHECK HEADER
+            # =================================================
+
+            Write-Host ""
+            Write-Host ""
+            Write-Host "========================================================"
+            Write-Host " CHECK $i / 120"
+            Write-Host " TIME: $(Get-Date)"
+            Write-Host "========================================================"
+
+
+            # =================================================
+            # NGROK PROCESS
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== NGROK PROCESS ==="
+
+            $ngrokCheck = Get-Process `
                 -Id $ngrokProcess.Id `
-                -Force `
                 -ErrorAction SilentlyContinue
+
+            if ($null -eq $ngrokCheck) {
+
+                Write-Host "STATUS: NOT RUNNING"
+
+            }
+            else {
+
+                Write-Host "STATUS: RUNNING"
+                Write-Host "PID: $($ngrokCheck.Id)"
+            }
+
+
+            # =================================================
+            # NGROK API
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== NGROK API ==="
+
+            try {
+
+                $api = Invoke-RestMethod `
+                    -Uri "http://127.0.0.1:4040/api/tunnels" `
+                    -Method Get `
+                    -ErrorAction Stop
+
+                if ($api.tunnels.Count -gt 0) {
+
+                    $currentTunnel = $api.tunnels[0]
+
+                    Write-Host "Public URL:"
+                    Write-Host $currentTunnel.public_url
+
+                    Write-Host ""
+                    Write-Host "Protocol:"
+                    Write-Host $currentTunnel.proto
+
+                    Write-Host ""
+                    Write-Host "Tunnel name:"
+                    Write-Host $currentTunnel.name
+
+                    # -----------------------------------------
+                    # Metrics
+                    # -----------------------------------------
+
+                    Write-Host ""
+                    Write-Host "Connection metrics:"
+
+                    if ($null -ne $currentTunnel.metrics) {
+
+                        $currentTunnel.metrics |
+                            ConvertTo-Json -Depth 10
+
+                    }
+                    else {
+
+                        Write-Host "Metrics unavailable."
+                    }
+
+                }
+                else {
+
+                    Write-Host "No ngrok tunnels found."
+                }
+
+            }
+            catch {
+
+                Write-Host "NGROK API ERROR:"
+                Write-Host $_.Exception.Message
+            }
+
+
+            # =================================================
+            # WINDOWS RDP LISTENING PORT
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== WINDOWS RDP PORT 3389 ==="
+
+            $listeners = Get-NetTCPConnection `
+                -LocalPort 3389 `
+                -ErrorAction SilentlyContinue
+
+            if ($null -eq $listeners) {
+
+                Write-Host "No port 3389 entries found."
+
+            }
+            else {
+
+                $listeners |
+                    Select-Object `
+                        LocalAddress,
+                        LocalPort,
+                        RemoteAddress,
+                        RemotePort,
+                        State,
+                        OwningProcess |
+                    Format-Table
+            }
+
+
+            # =================================================
+            # ACTIVE RDP CONNECTIONS
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== ACTIVE TCP CONNECTIONS TO RDP ==="
+
+            $connections = Get-NetTCPConnection `
+                -LocalPort 3389 `
+                -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.State -ne "Listen"
+                }
+
+            if ($null -eq $connections) {
+
+                Write-Host "No active RDP TCP connections."
+
+            }
+            else {
+
+                $connections |
+                    Select-Object `
+                        LocalAddress,
+                        LocalPort,
+                        RemoteAddress,
+                        RemotePort,
+                        State,
+                        OwningProcess |
+                    Format-Table
+            }
+
+
+            # =================================================
+            # LOCAL RDP TEST
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== LOCAL RDP TEST ==="
+
+            $test = Test-NetConnection `
+                127.0.0.1 `
+                -Port 3389 `
+                -WarningAction SilentlyContinue
+
+            Write-Host "TcpTestSucceeded: $($test.TcpTestSucceeded)"
+
+
+            # =================================================
+            # TERMINAL SERVICES STATUS
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== TERMINAL SERVICE ==="
+
+            $service = Get-Service `
+                -Name TermService `
+                -ErrorAction SilentlyContinue
+
+            if ($service) {
+
+                Write-Host "Status:"
+                Write-Host $service.Status
+
+                Write-Host "Start type:"
+                Write-Host $service.StartType
+
+            }
+
+
+            # ============
+            # RDP REMOTE CONNECTION MANAGER EVENTS
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== RECENT RDP CONNECTION EVENTS ==="
+
+            try {
+
+                Get-WinEvent `
+                    -LogName "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational" `
+                    -MaxEvents 5 `
+                    -ErrorAction Stop |
+                    Select-Object `
+                        TimeCreated,
+                        Id,
+                        LevelDisplayName,
+                        Message |
+                    Format-List
+
+            }
+            catch {
+
+                Write-Host "RemoteConnectionManager log unavailable."
+            }
+
+
+            # =================================================
+            # RDP LOCAL SESSION MANAGER EVENTS
+            # =================================================
+
+            Write-Host ""
+            Write-Host "=== RECENT RDP SESSION EVENTS ==="
+
+            try {
+
+                Get-WinEvent `
+                    -LogName "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational" `
+                    -MaxEvents 5 `
+                    -ErrorAction Stop |
+                    Select-Object `
+                        TimeCreated,
+                        Id,
+                        LevelDisplayName,
+                        Message |
+                    Format-List
+
+            }
+            catch {
+
+                Write-Host "LocalSessionManager log unavailable."
+            }
+
+
+            # =================================================
+            # END CHECK
+            # =================================================
+
+            Write-Host ""
+            Write-Host "========================================================"
+            Write-Host " END CHECK $i"
+            Write-Host "========================================================"
         }
 
-        Write-Host "Done."
+
+        # =====================================================
+        # SESSION FINISHED
+        # =====================================================
+
+        Write-Host ""
+        Write-Host ""
+        Write-Host "########################################################"
+        Write-Host "#                                                      #"
+        Write-Host "#             RDP SESSION TIME EXPIRED                 #"
+        Write-Host "#                                                      #"
+        Write-Host "########################################################"
+
+
+        # =====================================================
+        # STOP NGROK
+        # =====================================================
+
+        if ($null -ne $ngrokProcess) {
+
+            $stillRunning = Get-Process `
+                -Id $ngrokProcess.Id `
+                -ErrorAction SilentlyContinue
+
+            if ($null -ne $stillRunning) {
+
+                Write-Host ""
+                Write-Host "Stopping ngrok..."
+
+                Stop-Process `
+                    -Id $ngrokProcess.Id `
+                    -Force `
+                    -ErrorAction SilentlyContinue
+            }
+        }
+
+        Write-Host ""
+        Write-Host "RDP workflow completed."
