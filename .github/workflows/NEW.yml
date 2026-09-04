@@ -139,46 +139,50 @@ jobs:
       # ============================================================
       # 4. Enable Windows RDP
       # ============================================================
-      - name: Enable Windows RDP
+      - name: Enable Windows RDP (FIXED)
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-
           Write-Host "=========================================="
-          Write-Host " ENABLING WINDOWS RDP"
+          Write-Host " ENABLING WINDOWS RDP (FIXED)"
           Write-Host "=========================================="
-
+          
           # Enable Remote Desktop
           Set-ItemProperty `
               -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
               -Name "fDenyTSConnections" `
               -Value 0
-
-          # Disable NLA temporarily for compatibility testing
+          
+          # CRITICAL: Set SecurityLayer to Negotiate (NOT SSL)
+          # Values: 0=RDP Security, 1=Negotiate, 2=SSL (incompatible with ngrok)
+          Set-ItemProperty `
+              -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+              -Name "SecurityLayer" `
+              -Value 1
+          
+          # Set Encryption to Low for ngrok compatibility
+          # Values: 1=Low, 2=Medium, 3=High
+          Set-ItemProperty `
+              -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+              -Name "MinEncryptionLevel" `
+              -Value 1
+          
+          # Disable NLA (Network Level Authentication)
           Set-ItemProperty `
               -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
               -Name "UserAuthentication" `
               -Value 0
-
+          
           # Enable firewall rules
-          Enable-NetFirewallRule `
-              -DisplayGroup "Remote Desktop"
-
-          # Make sure TermService starts automatically
-          Set-Service `
-              -Name "TermService" `
-              -StartupType Automatic
-
-          # Start RDP service
-          Start-Service `
-              -Name "TermService" `
-              -ErrorAction SilentlyContinue
-
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # Start Terminal Service
+          Set-Service -Name "TermService" -StartupType Automatic
+          Start-Service -Name "TermService" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
-
+          
           Write-Host ""
-          Write-Host "Remote Desktop enabled."
-          Write-Host "NLA disabled."
+          Write-Host "Remote Desktop enabled with fixes."
 
 
       # ============================================================
