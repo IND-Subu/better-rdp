@@ -240,7 +240,45 @@ jobs:
                   State,
                   OwningProcess
 
-
+          - name: Verify RDP Security Settings
+            shell: powershell
+            run: |
+              $ErrorActionPreference = "Stop"
+              Write-Host "=========================================="
+              Write-Host " RDP SECURITY SETTINGS"
+              Write-Host "=========================================="
+              
+              Write-Host ""
+              Write-Host "=== SecurityLayer ==="
+              $securityLayer = Get-ItemProperty `
+                  "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+                  -Name "SecurityLayer"
+              Write-Host "Value: $($securityLayer.SecurityLayer)"
+              Write-Host "(0=RDP Security, 1=Negotiate, 2=SSL)"
+              
+              Write-Host ""
+              Write-Host "=== MinEncryptionLevel ==="
+              $encryption = Get-ItemProperty `
+                  "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+                  -Name "MinEncryptionLevel"
+              Write-Host "Value: $($encryption.MinEncryptionLevel)"
+              Write-Host "(1=Low, 2=Medium, 3=High)"
+              
+              Write-Host ""
+              Write-Host "=== UserAuthentication (NLA) ==="
+              $nla = Get-ItemProperty `
+                  "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+                  -Name "UserAuthentication"
+              Write-Host "Value: $($nla.UserAuthentication)"
+              Write-Host "(0=Disabled, 1=Enabled)"
+              
+              Write-Host ""
+              Write-Host "=== fDenyTSConnections ==="
+              $deny = Get-ItemProperty `
+                  "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
+                  -Name "fDenyTSConnections"
+              Write-Host "Value: $($deny.fDenyTSConnections)"
+              Write-Host "(0=Enabled, 1=Disabled)"
           Write-Host ""
           Write-Host "=== Local RDP Test ==="
 
