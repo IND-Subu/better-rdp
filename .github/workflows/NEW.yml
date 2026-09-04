@@ -1,36 +1,110 @@
 name: Windows RDP
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
 
 jobs:
   build:
-
     runs-on: windows-latest
     timeout-minutes: 45
 
     steps:
-    - name: Downloading Ngrok.
+
+    - name: Downloading Ngrok
+      shell: powershell
       run: |
-        Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Invoke-WebRequest https://raw.githubusercontent.com/AtlasFn/atlas-server/main/start.bat -OutFile start.bat
-    - name: Extracting Ngrok Files.
-      run: Expand-Archive ngrok.zip
-    - name: Connecting to your Ngrok account.
-      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+        Invoke-WebRequest `
+          -Uri "https://ngrok.com/download?os=windows&arch=amd64" `
+          -OutFile "ngrok.zip"
+
+        Expand-Archive -Path "ngrok.zip" -DestinationPath "ngrok" -Force
+
+        if (!(Test-Path ".\ngrok\ngrok.exe")) {
+          Write-Host "ngrok.exe was not found"
+          Get-ChildItem -Recurse ".\ngrok"
+          exit 1
+        }
+
+    - name: Connecting to your Ngrok account
+      shell: powershell
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-    - name: Activating RDP access.
-      run: | 
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+      run: |
+        .\ngrok\ngrok.exe config add-authtoken "$env:NGROK_AUTH_TOKEN"
+
+    - name: Activating RDP access
+      shell: powershell
+      run: |
+        Set-ItemProperty `
+          -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+          -Name "fDenyTSConnections" `
+          -Value 0
+
+        Set-ItemProperty `
+          -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+          -Name "UserAuthentication" `
+          -Value 1
+
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-        # copy wallpaper.jpg D:\a\wallpaper.jpg
-        # copy wallpaper.bat D:\a\wallpaper.bat
-    - name: Creating Tunnel.
-      run: Start-Process Powershell -ArgumentList '-Noexit -Command ".\ngrok\ngrok.exe tcp 3389"'
-    - name: Connecting to your RDP.
-      run: cmd /c start.bat
-    - name: RDP is ready!
-      run: | 
-        Invoke-WebRequest https://github.com/AtlasFn/atlas-server/raw/main/loop.ps1 -OutFile loop.ps1
-        ./loop.ps1
+
+        Write-Host "RDP has been enabled."
+
+    - name: Creating Tunnel
+      shell: powershell
+      run: |
+        Start-Process `
+          -FilePath ".\ngrok\ngrok.exe" `
+          -ArgumentList "tcp 3389" `
+          -RedirectStandardOutput "ngrok.log" `
+          -RedirectStandardError "ngrok-error.log" `
+          -WindowStyle Hidden
+
+        Start-Sleep -Seconds 5
+
+        if (Test-Path "ngrok-error.log") {
+          Get-Content "ngrok-error.log"
+        }
+
+        try {
+          $tunnels = Invoke-RestMethod `
+            -Uri "http://127.0.0.1:4040/api/tunnels"
+
+          $tunnel = $tunnels.tunnels |
+            Where-Object { $_.proto -eq "tcp" } |
+            Select-Object -First 1
+
+          if ($null -eq $tunnel) {
+            Write-Host "No TCP tunnel was created."
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "       RDP CONNECTION INFORMATION"
+          Write-Host "======================================"
+          Write-Host "Address: $($tunnel.public_url)"
+          Write-Host "======================================"
+          Write-Host ""
+
+        } catch {
+          Write-Host "Could not retrieve ngrok tunnel."
+          Write-Host "ngrok output:"
+          if (Test-Path "ngrok.log") {
+            Get-Content "ngrok.log"
+          }
+
+          Write-Host "ngrok errors:"
+          if (Test-Path "ngrok-error.log") {
+            Get-Content "ngrok-error.log"
+          }
+
+          exit 1
+        }
+
+    - name: Keep RDP session alive
+      shell: powershell
+      run: |
+        Write-Host "RDP server is running."
+        Write-Host "Do not cancel this workflow while using RDP."
+
+        Start-Sleep -Seconds 2160
